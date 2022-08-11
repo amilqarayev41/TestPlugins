@@ -1,0 +1,8 @@
+{
+  "name": "Turkish-Repo",
+  "description": "Custom Turkish movie and TV series extensions",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/plugins.json"
+  ]
+}

@@ -1,0 +1,87 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/Dizilla.png",
+        "fileHash": "sha256-dcfe87e374ca1e4c664b2d78a2eb2a9d750c7ae998fe5a471997e1e8ac9d406a",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/amilqarayev41/Turkish-Repo",
+        "fileSize": 29600,
+        "status": 1,
+        "language": "tr",
+        "authors": [
+            "Amil"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Anime",
+            "Cartoon"
+        ],
+        "version": 1,
+        "internalName": "Dizilla",
+        "description": "Dizilla",
+        "url": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/Dizilla.cs3",
+        "name": "Dizilla"
+    },
+    {
+        "iconUrl": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/ElisWorld.png",
+        "fileHash": "sha256-cca1be756499bb2f89b1b62b8911b1c91182b7354f951cf6767b9345fadc2bd9",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/amilqarayev41/Turkish-Repo",
+        "fileSize": 49404,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Amil"
+        ],
+        "tvTypes": [
+            "Cartoon",
+            "Anime",
+            "Movie"
+        ],
+        "version": 4,
+        "internalName": "ElisWorld",
+        "description": "ElisWorld",
+        "url": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/ElisWorld.cs3",
+        "name": "ElisWorld"
+    },
+    {
+        "iconUrl": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/FullHDFilmizlesene.png",
+        "fileHash": "sha256-0c6cb6edca9db81ad4ec7acdb63b683f41bcc4cb6115575a2dea07e2f6ea6801",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/amilqarayev41/Turkish-Repo",
+        "fileSize": 33782,
+        "status": 1,
+        "language": "tr",
+        "authors": [
+            "Amil"
+        ],
+        "tvTypes": [
+            "Movie"
+        ],
+        "version": 1,
+        "internalName": "FullHDFilmizlesene",
+        "description": "FullHDFilmizlesene",
+        "url": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/FullHDFilmizlesene.cs3",
+        "name": "FullHDFilmizlesene"
+    },
+    {
+        "iconUrl": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/HDFilmCehennemi.png",
+        "fileHash": "sha256-fe269126a43396e59a40e437936d04544bd2af7a10da3be0260c68f34287f629",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/amilqarayev41/Turkish-Repo",
+        "fileSize": 31865,
+        "status": 1,
+        "language": "tr",
+        "authors": [
+            "Amil"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 7,
+        "internalName": "HDFilmCehennemi",
+        "description": "HDFilmCehennemi",
+        "url": "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/HDFilmCehennemi.cs3",
+        "name": "HDFilmCehennemi"
+    }
+]
