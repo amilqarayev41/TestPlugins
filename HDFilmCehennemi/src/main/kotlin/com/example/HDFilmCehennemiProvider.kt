@@ -5,6 +5,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
@@ -243,13 +246,12 @@ class HDFilmCehennemiProvider : MainAPI() {
                     Regex(""""?file"?\s*:\s*"([^"]+\.m3u8[^"]*)"""")
                         .findAll(pageText).forEach { match ->
                             callback.invoke(
-                                ExtractorLink(
+                                newExtractorLink(
                                     source = name,
                                     name = name,
                                     url = match.groupValues[1],
                                     referer = fullUrl,
-                                    quality = Qualities.Unknown.value,
-                                    isM3u8 = true,
+                                    type = ExtractorLinkType.M3U8,
                                 )
                             )
                         }
@@ -259,13 +261,13 @@ class HDFilmCehennemiProvider : MainAPI() {
                             val label = Regex(""""?label"?\s*:\s*"(\d+)p?"""")
                                 .find(pageText)?.groupValues?.get(1)?.toIntOrNull()
                             callback.invoke(
-                                ExtractorLink(
+                                newExtractorLink(
                                     source = name,
                                     name = name,
                                     url = match.groupValues[1],
                                     referer = fullUrl,
+                                    type = ExtractorLinkType.VIDEO,
                                     quality = label ?: Qualities.Unknown.value,
-                                    isM3u8 = false,
                                 )
                             )
                         }
