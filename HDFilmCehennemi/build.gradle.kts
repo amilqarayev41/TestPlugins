@@ -1,3 +1,4 @@
+// HDFilmCehennemi plugin
 // Use an integer for version numbers
 version = 1
 
