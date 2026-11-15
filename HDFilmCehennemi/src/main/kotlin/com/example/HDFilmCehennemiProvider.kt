@@ -319,13 +319,55 @@ class HDFilmCehennemiProvider : MainAPI() {
         return sb.toString()
     }
 
+    private fun unpackPackedJs(script: String): String {
+        return try {
+            val match = Regex("""\}\s*\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('\|'\)""").find(script)
+                ?: return getAndUnpack(script)
+            val payload = match.groupValues[1].replace("\\'", "'")
+            val radix = match.groupValues[2].toIntOrNull() ?: 36
+            val count = match.groupValues[3].toIntOrNull() ?: 0
+            val symtab = match.groupValues[4].split("|")
+
+            fun unbase(str: String): Int {
+                val alphabet62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                var ret = 0
+                val reversed = str.reversed()
+                for ((i, ch) in reversed.withIndex()) {
+                    val idx = alphabet62.indexOf(ch)
+                    if (idx < 0 || idx >= radix) return -1
+                    var multiplier = 1
+                    for (k in 0 until i) multiplier *= radix
+                    ret += multiplier * idx
+                }
+                return ret
+            }
+
+            val decoded = Regex("""\b[a-zA-Z0-9_]+\b""").replace(payload) { wordMatch ->
+                val word = wordMatch.value
+                val idx = unbase(word)
+                if (idx in symtab.indices && symtab[idx].isNotBlank()) {
+                    symtab[idx]
+                } else {
+                    word
+                }
+            }
+            decoded
+        } catch (_: Exception) {
+            getAndUnpack(script)
+        }
+    }
+
     private suspend fun invokeLocalSource(
         source: String,
         url: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val pageText = app.get(url, referer = "$mainUrl/").text
+        val pageText = try {
+            app.get(url, referer = "$mainUrl/").text
+        } catch (_: Exception) {
+            return
+        }
         var videoUrl: String? = null
 
         // 1. Try split format with dynamic delimiter: return func("chunk1...chunkN".split("delim"))
@@ -339,39 +381,43 @@ class HDFilmCehennemiProvider : MainAPI() {
         }
 
         // 2. Try array format in pageText: return func(["chunk1", "chunk2", ...])
+        // Uses bracket match so any escaped characters (like \/ or \) are fully captured
         if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
-            val arrMatch = Regex("""return\s+([a-zA-Z0-9_$]+)\s*\(\s*\[([\"'\w\s,\.\=\+\/\-]+)\]\s*\)""")
+            val arrMatch = Regex("""return\s+([a-zA-Z0-9_$]+)\s*\(\s*(\[[^\]]+\])\s*\)""")
                 .find(pageText)
             if (arrMatch != null) {
-                val fnName = arrMatch.groupValues[1]
-                val chunks = arrMatch.groupValues[2]
+                val rawArr = arrMatch.groupValues[2]
+                val chunks = rawArr.removeSurrounding("[", "]")
                     .split(",")
-                    .map { it.trim().trim('"', '\'') }
+                    .map {
+                        it.trim()
+                            .trim('"', '\'')
+                            .replace("\\/", "/")
+                            .replace("\\\\", "\\")
+                    }
                     .filter { it.isNotBlank() }
 
                 // Try V1 first
                 videoUrl = decryptSourceV1(chunks.toMutableList())
 
-                // If V1 didn't yield a valid m3u8, try V2 by extracting keys from unpacked script
+                // If V1 didn't yield a valid m3u8, try V2 by extracting key pairs from unpacked scripts
                 if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
                     val scriptTags = Jsoup.parse(pageText).select("script").map { it.data() }
                     for (script in scriptTags) {
                         if (!script.contains("eval(function")) continue
-                        val unpacked = getAndUnpack(script)
-                        if (unpacked.contains(fnName)) {
-                            val fnBody = unpacked.substringAfter("function $fnName").substringBefore("}")
-                            val keysMatch = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;""")
-                                .find(fnBody)
-                            if (keysMatch != null) {
-                                val hashKey = keysMatch.groupValues[1]
-                                val opKey = keysMatch.groupValues[2]
-                                val candidate = decryptSourceV2(chunks, hashKey, opKey)
-                                if (!candidate.isNullOrBlank() && candidate.contains(".m3u8")) {
-                                    videoUrl = candidate
-                                    break
-                                }
+                        val unpacked = unpackPackedJs(script)
+                        val keyMatches = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]{15,40})"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]{2,10})"\s*;""")
+                            .findAll(unpacked)
+                        for (km in keyMatches) {
+                            val hashKey = km.groupValues[1]
+                            val opKey = km.groupValues[2]
+                            val candidate = decryptSourceV2(chunks, hashKey, opKey)
+                            if (!candidate.isNullOrBlank() && candidate.contains(".m3u8")) {
+                                videoUrl = candidate
+                                break
                             }
                         }
+                        if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) break
                     }
                 }
             }
@@ -382,28 +428,33 @@ class HDFilmCehennemiProvider : MainAPI() {
             val scriptTags = Jsoup.parse(pageText).select("script").map { it.data() }
             for (script in scriptTags) {
                 if (!script.contains("eval(function")) continue
-                val unpacked = getAndUnpack(script)
-                val callMatch = Regex("""var\s+\w+\s*=\s*([a-zA-Z0-9_$]+)\s*\(\s*\[([\"'\w\s,\.\=\+\/\-]+)\]\s*\)""")
+                val unpacked = unpackPackedJs(script)
+                val callMatch = Regex("""var\s+\w+\s*=\s*([a-zA-Z0-9_$]+)\s*\(\s*(\[[^\]]+\])\s*\)""")
                     .find(unpacked)
                 if (callMatch != null) {
-                    val fnName = callMatch.groupValues[1]
-                    val chunks = callMatch.groupValues[2]
+                    val rawArr = callMatch.groupValues[2]
+                    val chunks = rawArr.removeSurrounding("[", "]")
                         .split(",")
-                        .map { it.trim().trim('"', '\'') }
+                        .map {
+                            it.trim()
+                                .trim('"', '\'')
+                                .replace("\\/", "/")
+                                .replace("\\\\", "\\")
+                        }
                         .filter { it.isNotBlank() }
 
-                    val fnBody = unpacked.substringAfter("function $fnName").substringBefore("}")
-                    val keysMatch = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;""")
-                        .find(fnBody)
-                    if (keysMatch != null) {
-                        val hashKey = keysMatch.groupValues[1]
-                        val opKey = keysMatch.groupValues[2]
+                    val keyMatches = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]{15,40})"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]{2,10})"\s*;""")
+                        .findAll(unpacked)
+                    for (km in keyMatches) {
+                        val hashKey = km.groupValues[1]
+                        val opKey = km.groupValues[2]
                         val candidate = decryptSourceV2(chunks, hashKey, opKey)
                         if (!candidate.isNullOrBlank() && candidate.contains(".m3u8")) {
                             videoUrl = candidate
                             break
                         }
                     }
+                    if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) break
                 }
             }
         }
@@ -413,7 +464,7 @@ class HDFilmCehennemiProvider : MainAPI() {
             val scriptData = Jsoup.parse(pageText).select("script")
                 .find { it.data().contains("sources:") }?.data()
             if (scriptData != null) {
-                val unpacked = getAndUnpack(scriptData)
+                val unpacked = unpackPackedJs(scriptData)
                 val fileLink = unpacked
                     .substringAfter("file_link=\"", "")
                     .substringBefore("\";", "")
@@ -470,25 +521,37 @@ class HDFilmCehennemiProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val document = app.get(data).document
+        val processedPlayerIds = mutableSetOf<String>()
 
-        // ---- Method 1: Direct iframe fallback from page ----
-        // For TV Series episodes and default movie players, this is immediately available
-        // and avoids making rapid burst API calls that trigger HTTP 429 rate limits.
+        fun normalizePlayerUrl(rawUrl: String): String {
+            var url = fixUrl(rawUrl)
+            if (url.contains("?rapidrame_id=")) {
+                val id = url.substringAfter("?rapidrame_id=").substringBefore("&").trimEnd('/')
+                url = "$mainUrl/rplayer/$id/"
+            } else if (url.contains("/playerr/")) {
+                val id = url.substringAfter("/playerr/").substringBefore("?").trimEnd('/')
+                url = "$mainUrl/rplayer/$id/"
+            }
+            return url
+        }
+
+        fun extractPlayerId(url: String): String {
+            return url.trimEnd('/').substringAfterLast('/')
+        }
+
+        // ---- Method 1: Direct iframe from page ----
         val directIframe = document.selectFirst("div.video-container iframe")
             ?.let { it.attr("data-src").ifBlank { it.attr("src") } }
-        var directPlayerUrl: String? = null
         if (!directIframe.isNullOrBlank()) {
-            directPlayerUrl = fixUrl(directIframe)
-            if (directPlayerUrl.contains("?rapidrame_id=")) {
-                directPlayerUrl = "$mainUrl/playerr/" +
-                    directPlayerUrl.substringAfter("?rapidrame_id=")
-            }
+            val playerUrl = normalizePlayerUrl(directIframe)
+            val pid = extractPlayerId(playerUrl)
+            if (pid.isNotBlank()) processedPlayerIds.add(pid)
             try {
-                invokeLocalSource("HDFilmCehennemi", directPlayerUrl, subtitleCallback, callback)
+                invokeLocalSource("HDFilmCehennemi", playerUrl, subtitleCallback, callback)
             } catch (_: Exception) { }
         }
 
-        // ---- Method 2: Alternative links (multiple sources/languages) ----
+        // ---- Method 2: Alternative links (Dual, Altyazılı, Dublaj) ----
         val altButtons = document.select("div.alternative-links").flatMap { element ->
             val langCode = element.attr("data-lang").uppercase()
             element.select("button.alternative-link").map { button ->
@@ -509,22 +572,18 @@ class HDFilmCehennemiProvider : MainAPI() {
                     referer = data,
                 ).text
 
-                var iframe = Regex("""data-src=\\?"([^"]+)""")
+                val rawIframe = Regex("""data-src=\\?"([^"]+)""")
                     .find(apiResp)?.groupValues?.get(1)
                     ?.replace("\\", "")
                     ?: continue
 
-                if (iframe.contains("?rapidrame_id=")) {
-                    iframe = "$mainUrl/playerr/" +
-                        iframe.substringAfter("?rapidrame_id=")
-                }
-
-                // Skip if this player URL is identical to the direct one we already invoked
-                if (directPlayerUrl != null && (iframe == directPlayerUrl || iframe.substringAfterLast("/") == directPlayerUrl.substringAfterLast("/"))) {
+                val playerUrl = normalizePlayerUrl(rawIframe)
+                val pid = extractPlayerId(playerUrl)
+                if (pid.isNotBlank() && !processedPlayerIds.add(pid)) {
                     continue
                 }
 
-                invokeLocalSource(source, iframe, subtitleCallback, callback)
+                invokeLocalSource(source, playerUrl, subtitleCallback, callback)
             } catch (_: Exception) { }
         }
 
