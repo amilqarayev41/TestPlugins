@@ -277,14 +277,16 @@ class CizgiMaxProvider : MainAPI() {
 
                         // Check if redirected to an external host (Google Drive, Vidmoly, etc.)
                         if (finalUrl != fullSrc) {
-                            loadExtractor(finalUrl, referer = data, subtitleCallback, callback)
-                            foundAny = true
+                            if (loadExtractor(finalUrl, referer = data, subtitleCallback, callback)) {
+                                foundAny = true
+                            }
                         }
 
                         // Direct m3u8 in response body
-                        val m3u8Matches = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(body)
+                        val cleanBody = body.replace("\\/", "/")
+                        val m3u8Matches = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(cleanBody)
                         for (match in m3u8Matches) {
-                            val streamUrl = match.value
+                            val streamUrl = match.value.replace("&amp;", "&")
                             callback.invoke(
                                 newExtractorLink(
                                     sourceName,
@@ -304,9 +306,9 @@ class CizgiMaxProvider : MainAPI() {
                         }
 
                         // Direct mp4 in response body
-                        val mp4Matches = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""").findAll(body)
+                        val mp4Matches = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""").findAll(cleanBody)
                         for (match in mp4Matches) {
-                            val streamUrl = match.value
+                            val streamUrl = match.value.replace("&amp;", "&")
                             callback.invoke(
                                 newExtractorLink(
                                     sourceName,
@@ -326,11 +328,12 @@ class CizgiMaxProvider : MainAPI() {
                         }
 
                         // Nested iframes
-                        val iframes = Regex("""<iframe[^>]+src=["']([^"']+)["']""").findAll(body)
+                        val iframes = Regex("""<iframe[^>]+src=["']([^"']+)["']""").findAll(cleanBody)
                         for (iframe in iframes) {
-                            val iUrl = fixUrl(iframe.groupValues[1])
-                            loadExtractor(iUrl, referer = finalUrl, subtitleCallback, callback)
-                            foundAny = true
+                            val iUrl = fixUrl(iframe.groupValues[1].replace("&amp;", "&"))
+                            if (loadExtractor(iUrl, referer = finalUrl, subtitleCallback, callback)) {
+                                foundAny = true
+                            }
                         }
                     } catch (_: Exception) {}
                 }
