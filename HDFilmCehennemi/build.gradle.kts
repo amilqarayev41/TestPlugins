@@ -4,7 +4,7 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 4
+version = 5
 
 cloudstream {
     description = "HDFilmCehennemi"
@@ -23,5 +23,5 @@ cloudstream {
 
     language = "tr"
 
-    iconUrl = "https://raw.githubusercontent.com/amilqarayev41/TestPlugins/builds/HDFilmCehennemi.png"
+    iconUrl = "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/HDFilmCehennemi.png"
 }
