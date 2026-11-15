@@ -80,7 +80,7 @@ class CizgiMaxProvider : MainAPI() {
             ?.trim()?.toIntOrNull()
 
         val rating = document.selectFirst("span.meta-score-val")?.text()
-            ?.trim()?.replace(",", ".")?.toRatingInt()
+            ?.trim()?.replace(",", ".")?.toDoubleOrNull()
 
         val tags = document.select("li.meta-genres a, .genre-links a").map { it.text().trim() }
 
@@ -132,7 +132,7 @@ class CizgiMaxProvider : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.year = year
-                this.rating = rating
+                this.score = Score.from10(rating)
                 this.tags = tags
             }
         }
@@ -141,7 +141,7 @@ class CizgiMaxProvider : MainAPI() {
             this.posterUrl = poster
             this.plot = description
             this.year = year
-            this.rating = rating
+            this.score = Score.from10(rating)
             this.tags = tags
         }
     }
