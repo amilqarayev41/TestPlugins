@@ -2,6 +2,7 @@ package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
@@ -190,15 +191,11 @@ class ElisWorldProvider : MainAPI() {
             val label = if (qualityText.isNotBlank()) "$serverName ($qualityText)" else serverName
 
             if (rawUrl.contains("123moviespremium.net")) {
-                val qual = if (label.contains("1080") || label.contains("FHD", true)) {
-                    Qualities.P1080.value
-                } else {
-                    Qualities.P720.value
-                }
+                // Direct MP4 CDN stream - SD 360p for download & quick play
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "$name - Direct MP4 ($label)",
+                        name = "$name - Direct MP4 (SD 360p)",
                         url = rawUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
@@ -207,12 +204,18 @@ class ElisWorldProvider : MainAPI() {
                             "Referer" to "$mainUrl/",
                             "User-Agent" to USER_AGENT
                         )
-                        this.quality = qual
+                        this.quality = Qualities.P360.value
                     }
                 )
                 foundLinks = true
             } else if (rawUrl.contains("gomovies-sx.net")) {
                 val ok = extractGoMovies(rawUrl, data, subtitleCallback, callback)
+                if (ok) foundLinks = true
+                try {
+                    loadExtractor(rawUrl, data, subtitleCallback, callback)
+                } catch (_: Exception) {}
+            } else if (rawUrl.contains("vidlink.pro")) {
+                val ok = extractVidlink(rawUrl, data, subtitleCallback, callback)
                 if (ok) foundLinks = true
                 try {
                     loadExtractor(rawUrl, data, subtitleCallback, callback)
@@ -242,7 +245,7 @@ class ElisWorldProvider : MainAPI() {
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "$name - Direct MP4",
+                        name = "$name - Direct MP4 (SD 360p)",
                         url = src,
                         type = ExtractorLinkType.VIDEO
                     ) {
@@ -251,7 +254,7 @@ class ElisWorldProvider : MainAPI() {
                             "Referer" to "$mainUrl/",
                             "User-Agent" to USER_AGENT
                         )
-                        this.quality = Qualities.P720.value
+                        this.quality = Qualities.P360.value
                     }
                 )
                 foundLinks = true
@@ -285,22 +288,99 @@ class ElisWorldProvider : MainAPI() {
                     val tmdb = match.groupValues[1]
                     "https://gomovies-sx.net/vs_src.php?type=movie&id=$tmdb"
                 } else null
+            } ?: return false
+
+            val jsonText = app.get(
+                vsUrl,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to embedUrl,
+                    "X-Requested-With" to "XMLHttpRequest"
+                )
+            ).text
+
+            val srcMatch = Regex(""""src"\s*:\s*"([^"]+)"""").find(jsonText)
+            val landingUrl = srcMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: return false
+
+            // Fetch landing page to get the direct playerUrl
+            val landingHtml = app.get(
+                landingUrl,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to embedUrl
+                )
+            ).text
+            val playerPath = Regex(""""playerUrl"\s*:\s*"([^"]+)"""").find(landingHtml)?.groupValues?.get(1)?.replace("\\/", "/")
+            val playerUrl = if (!playerPath.isNullOrBlank()) {
+                val domain = landingUrl.substringBefore("/embed/tv").substringBefore("/embed/movie")
+                "$domain$playerPath"
+            } else {
+                landingUrl
             }
 
-            if (vsUrl != null) {
-                val jsonText = app.get(
-                    vsUrl,
-                    headers = mapOf(
-                        "User-Agent" to USER_AGENT,
-                        "Referer" to embedUrl,
-                        "X-Requested-With" to "XMLHttpRequest"
-                    )
-                ).text
-                val srcMatch = Regex(""""src"\s*:\s*"([^"]+)"""").find(jsonText)
-                val srcUrl = srcMatch?.groupValues?.get(1)?.replace("\\/", "/")
-                if (!srcUrl.isNullOrBlank()) {
-                    return loadExtractor(srcUrl, embedUrl, subtitleCallback, callback)
-                }
+            // Headless WebView executes the player and captures the 1080p master.m3u8 playlist
+            val resolver = WebViewResolver(
+                interceptUrl = Regex(""".*master\.m3u8.*|.*\.m3u8\?.*""")
+            )
+            val res = app.get(playerUrl, interceptor = resolver)
+            val m3u8Url = res.url.takeIf { it.contains(".m3u8") }
+                ?: res.okhttpResponse.request.url.toString()
+
+            if (m3u8Url.contains(".m3u8")) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "$name - Server 1 (1080p FHD)",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "https://stellarconductornexus.com/"
+                        this.headers = mapOf(
+                            "Referer" to "https://stellarconductornexus.com/",
+                            "User-Agent" to USER_AGENT
+                        )
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+                return true
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun extractVidlink(
+        vidlinkUrl: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val resolver = WebViewResolver(
+                interceptUrl = Regex(""".*\.m3u8.*""")
+            )
+            val res = app.get(vidlinkUrl, interceptor = resolver)
+            val m3u8Url = res.url.takeIf { it.contains(".m3u8") }
+                ?: res.okhttpResponse.request.url.toString()
+
+            if (m3u8Url.contains(".m3u8")) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "$name - Server 2 (1080p FHD)",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "https://vidlink.pro/"
+                        this.headers = mapOf(
+                            "Referer" to "https://vidlink.pro/",
+                            "User-Agent" to USER_AGENT
+                        )
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+                return true
             }
             false
         } catch (_: Exception) {
