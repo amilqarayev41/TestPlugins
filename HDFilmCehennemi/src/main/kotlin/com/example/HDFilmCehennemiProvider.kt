@@ -363,8 +363,21 @@ class HDFilmCehennemiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
+        if (!url.contains("/playerr/")) {
+            try {
+                loadExtractor(url, referer = "$mainUrl/", subtitleCallback, callback)
+            } catch (_: Exception) {}
+            return
+        }
+
         val pageText = try {
-            app.get(url, referer = "$mainUrl/").text
+            app.get(
+                url,
+                referer = "$mainUrl/",
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            ).text
         } catch (_: Exception) {
             return
         }
@@ -520,17 +533,25 @@ class HDFilmCehennemiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val document = app.get(data).document
+        val document = app.get(
+            data,
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        ).document
         val processedPlayerIds = mutableSetOf<String>()
 
         fun normalizePlayerUrl(rawUrl: String): String {
             var url = fixUrl(rawUrl)
             if (url.contains("?rapidrame_id=")) {
                 val id = url.substringAfter("?rapidrame_id=").substringBefore("&").trimEnd('/')
-                url = "$mainUrl/rplayer/$id/"
+                url = "$mainUrl/playerr/$id"
+            } else if (url.contains("/rplayer/")) {
+                val id = url.substringAfter("/rplayer/").substringBefore("?").trimEnd('/')
+                url = "$mainUrl/playerr/$id"
             } else if (url.contains("/playerr/")) {
                 val id = url.substringAfter("/playerr/").substringBefore("?").trimEnd('/')
-                url = "$mainUrl/rplayer/$id/"
+                url = "$mainUrl/playerr/$id"
             }
             return url
         }
@@ -566,6 +587,7 @@ class HDFilmCehennemiProvider : MainAPI() {
                 val apiResp = app.get(
                     "$mainUrl/video/$videoID/",
                     headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         "Content-Type" to "application/json",
                         "X-Requested-With" to "fetch",
                     ),
