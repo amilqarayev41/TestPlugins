@@ -247,12 +247,14 @@ class HDFilmCehennemiProvider : MainAPI() {
                         .findAll(pageText).forEach { match ->
                             callback.invoke(
                                 newExtractorLink(
-                                    source = name,
-                                    name = name,
-                                    url = match.groupValues[1],
-                                    referer = fullUrl,
-                                    type = ExtractorLinkType.M3U8,
-                                )
+                                    name,
+                                    name,
+                                    match.groupValues[1],
+                                    ExtractorLinkType.M3U8,
+                                ) {
+                                    this.referer = fullUrl
+                                    this.quality = Qualities.Unknown.value
+                                }
                             )
                         }
 
@@ -262,13 +264,14 @@ class HDFilmCehennemiProvider : MainAPI() {
                                 .find(pageText)?.groupValues?.get(1)?.toIntOrNull()
                             callback.invoke(
                                 newExtractorLink(
-                                    source = name,
-                                    name = name,
-                                    url = match.groupValues[1],
-                                    referer = fullUrl,
-                                    type = ExtractorLinkType.VIDEO,
-                                    quality = label ?: Qualities.Unknown.value,
-                                )
+                                    name,
+                                    name,
+                                    match.groupValues[1],
+                                    ExtractorLinkType.VIDEO,
+                                ) {
+                                    this.referer = fullUrl
+                                    this.quality = label ?: Qualities.Unknown.value
+                                }
                             )
                         }
                 } else {
