@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
+import okhttp3.Interceptor
 
 class CizgiMaxProvider : MainAPI() {
     override var mainUrl = "https://cizgimax.online"
@@ -201,6 +202,11 @@ class CizgiMaxProvider : MainAPI() {
                                         vUrl,
                                         ExtractorLinkType.VIDEO
                                     ) {
+                                        this.referer = "https://tau-video.xyz/"
+                                        this.headers = mapOf(
+                                            "Referer" to "https://tau-video.xyz/",
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                        )
                                         this.quality = quality
                                     }
                                 )
@@ -224,7 +230,44 @@ class CizgiMaxProvider : MainAPI() {
                     } catch (_: Exception) {}
                 }
 
-                // 2. Src iframe flow (/oynat/?t=...)
+                // 2. Direct native streamUrl flow (HLS / mrc / native)
+                if (!server.streamUrl.isNullOrBlank()) {
+                    try {
+                        val fullStreamUrl = fixUrl(server.streamUrl)
+                        val quality = getQualityFromName(server.label)
+                        callback.invoke(
+                            newExtractorLink(
+                                sourceName,
+                                sourceName,
+                                fullStreamUrl,
+                                ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = data
+                                this.headers = mapOf(
+                                    "Referer" to data,
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                )
+                                this.quality = quality
+                            }
+                        )
+                        foundAny = true
+
+                        // Check metaUrl for subtitles
+                        if (!server.metaUrl.isNullOrBlank()) {
+                            try {
+                                val metaFull = fixUrl(server.metaUrl)
+                                val metaResp = app.get(metaFull, referer = data).parsedSafe<MetaResponse>()
+                                metaResp?.subs?.forEach { sub ->
+                                    val sUrl = fixUrlNull(sub.url) ?: return@forEach
+                                    val sLang = sub.label ?: sub.lang ?: "Türkçe"
+                                    subtitleCallback.invoke(SubtitleFile(sLang, sUrl))
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // 3. Src iframe flow (/oynat/?t=...)
                 if (!server.src.isNullOrBlank()) {
                     try {
                         val fullSrc = fixUrl(server.src)
@@ -250,6 +293,10 @@ class CizgiMaxProvider : MainAPI() {
                                     ExtractorLinkType.M3U8
                                 ) {
                                     this.referer = finalUrl
+                                    this.headers = mapOf(
+                                        "Referer" to finalUrl,
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                    )
                                     this.quality = Qualities.Unknown.value
                                 }
                             )
@@ -268,6 +315,10 @@ class CizgiMaxProvider : MainAPI() {
                                     ExtractorLinkType.VIDEO
                                 ) {
                                     this.referer = finalUrl
+                                    this.headers = mapOf(
+                                        "Referer" to finalUrl,
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                    )
                                     this.quality = Qualities.Unknown.value
                                 }
                             )
@@ -299,6 +350,20 @@ class CizgiMaxProvider : MainAPI() {
         }
 
         return foundAny
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val builder = request.newBuilder()
+            builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            val referer = if (extractorLink.referer.isNotBlank()) extractorLink.referer else "$mainUrl/"
+            builder.header("Referer", referer)
+            extractorLink.headers.forEach { (key, value) ->
+                builder.header(key, value)
+            }
+            chain.proceed(builder.build())
+        }
     }
 
     // ======================== Helpers ====================================
@@ -368,11 +433,24 @@ class CizgiMaxProvider : MainAPI() {
     data class ServerItem(
         @JsonProperty("type") val type: String? = null,
         @JsonProperty("src") val src: String? = null,
+        @JsonProperty("streamUrl") val streamUrl: String? = null,
+        @JsonProperty("metaUrl") val metaUrl: String? = null,
         @JsonProperty("resolveUrl") val resolveUrl: String? = null,
         @JsonProperty("label") val label: String? = null,
         @JsonProperty("lang") val lang: String? = null,
         @JsonProperty("embedId") val embedId: Any? = null,
         @JsonProperty("notice") val notice: String? = null
+    )
+
+    data class MetaResponse(
+        @JsonProperty("hls") val hls: String? = null,
+        @JsonProperty("subs") val subs: List<MetaSub>? = null
+    )
+
+    data class MetaSub(
+        @JsonProperty("label") val label: String? = null,
+        @JsonProperty("lang") val lang: String? = null,
+        @JsonProperty("url") val url: String? = null
     )
 
     data class NpResolveResponse(

@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import okhttp3.Interceptor
 
 class HDFilmCehennemiProvider : MainAPI() {
     override var mainUrl = "https://www.hdfilmcehennemi.nl"
@@ -503,6 +504,11 @@ class HDFilmCehennemiProvider : MainAPI() {
                     linkType,
                 ) {
                     this.referer = "$mainUrl/"
+                    this.headers = mapOf(
+                        "Referer" to "$mainUrl/",
+                        "Origin" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
                     this.quality = Qualities.Unknown.value
                 }
             )
@@ -610,6 +616,27 @@ class HDFilmCehennemiProvider : MainAPI() {
         }
 
         return true
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val builder = request.newBuilder()
+            val url = request.url.toString()
+            if (url.contains("rapidrame") || url.contains("hdfilmcehennemi")) {
+                builder.header("Referer", "$mainUrl/")
+                builder.header("Origin", mainUrl)
+                builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            } else {
+                val referer = if (extractorLink.referer.isNotBlank()) extractorLink.referer else "$mainUrl/"
+                builder.header("Referer", referer)
+                builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            }
+            extractorLink.headers.forEach { (key, value) ->
+                builder.header(key, value)
+            }
+            chain.proceed(builder.build())
+        }
     }
 
     // ======================== Helpers ====================================

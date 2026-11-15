@@ -4,7 +4,7 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 3
+version = 4
 
 cloudstream {
     description = "CizgiMax - Çizgi Film ve Anime"
@@ -23,5 +23,5 @@ cloudstream {
 
     language = "tr"
 
-    iconUrl = "https://cizgimax.online/favicon.ico"
+    iconUrl = "https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/CizgiMax.png"
 }
