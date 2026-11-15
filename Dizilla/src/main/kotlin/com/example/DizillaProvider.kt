@@ -148,7 +148,7 @@ class DizillaProvider : MainAPI() {
             this.backgroundPosterUrl = backgroundUrl
             this.plot = plot
             this.year = year
-            this.score = score
+            this.score = Score.from10(score)
             this.tags = genres
         }
     }
@@ -263,8 +263,8 @@ class DizillaProvider : MainAPI() {
                 val subLabel = sub.label ?: sub.lang ?: "Altyazı"
                 subtitleCallback.invoke(
                     SubtitleFile(
-                        lang = subLabel,
-                        url = "$subUrl&p=$pVal"
+                        subLabel,
+                        "$subUrl&p=$pVal"
                     )
                 )
             }
