@@ -2,7 +2,6 @@ package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
@@ -17,6 +16,7 @@ class ElisWorldProvider : MainAPI() {
 
     companion object {
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        const val TMDB_KEY = "68e094699525b18a70bab2f86b1fa706"
     }
 
     override val mainPage = mainPageOf(
@@ -176,216 +176,201 @@ class ElisWorldProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = mapOf("User-Agent" to USER_AGENT)).document
+        val document = app.get(data, headers = mapOf("User-Agent" to USER_AGENT), timeout = 20L).document
         val html = document.html()
         var foundLinks = false
 
-        // 1. Check server buttons with data-url
-        val serverButtons = document.select("button.server, button[data-url], .server[data-url]")
-        for (button in serverButtons) {
-            val rawUrl = button.attr("data-url").trim().replace("&amp;", "&")
-            if (rawUrl.isBlank()) continue
+        // Collect all server URLs from buttons + raw HTML
+        val serverUrls = (
+            document.select("button.server[data-url], button[data-url], .server[data-url]")
+                .map { it.attr("data-url") } +
+                Regex("""data-url=["'](https?://[^"']+)["']""").findAll(html).map { it.groupValues[1] }
+            )
+            .map { it.trim().replace("&amp;", "&") }
+            .filter { it.startsWith("http") }
+            .distinct()
 
-            val serverName = button.selectFirst("span")?.text()?.trim() ?: "Server"
-            val qualityText = button.selectFirst(".server-quality")?.text()?.trim() ?: ""
-            val label = if (qualityText.isNotBlank()) "$serverName ($qualityText)" else serverName
-
-            if (rawUrl.contains("123moviespremium.net")) {
-                // Direct MP4 CDN stream - SD 360p for download & quick play
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "$name - Direct MP4 (SD 360p)",
-                        url = rawUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "Referer" to "$mainUrl/",
-                            "User-Agent" to USER_AGENT
-                        )
-                        this.quality = Qualities.P360.value
-                    }
-                )
-                foundLinks = true
-            } else if (rawUrl.contains("gomovies-sx.net")) {
-                val ok = extractGoMovies(rawUrl, data, subtitleCallback, callback)
-                if (ok) foundLinks = true
-                try {
-                    loadExtractor(rawUrl, data, subtitleCallback, callback)
-                } catch (_: Exception) {}
-            } else if (rawUrl.contains("vidlink.pro")) {
-                val ok = extractVidlink(rawUrl, data, subtitleCallback, callback)
-                if (ok) foundLinks = true
-                try {
-                    loadExtractor(rawUrl, data, subtitleCallback, callback)
-                } catch (_: Exception) {}
-            } else {
-                try {
-                    val ok = loadExtractor(rawUrl, data, subtitleCallback, callback)
-                    if (ok) foundLinks = true
-                } catch (_: Exception) {}
-            }
+        // 1. Direct MP4 CDN stream (SD 360p) - instant, downloadable
+        serverUrls.filter { it.contains("123moviespremium.net") }.forEach { mp4 ->
+            callback.invoke(
+                newExtractorLink(
+                    source = this.name,
+                    name = "$name - Direct MP4 (SD 360p)",
+                    url = mp4,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf(
+                        "Referer" to "$mainUrl/",
+                        "User-Agent" to USER_AGENT
+                    )
+                    this.quality = Qualities.P360.value
+                }
+            )
+            foundLinks = true
         }
 
-        // 2. Also check iframes in the document
-        document.select("iframe[src]").forEach { iframe ->
-            val src = fixUrlNull(iframe.attr("src")) ?: return@forEach
-            if (src.contains("acceptable.a-ads") || src.contains("google")) return@forEach
+        // 2. Resolve TMDB id / season / episode (window.ewEpisode or server URLs)
+        val tmdbId = Regex("""tmdb_id["']?\s*:\s*["']?(\d+)""").find(html)?.groupValues?.get(1)
+            ?: serverUrls.firstNotNullOfOrNull { Regex("""/(?:tv|movie)/(\d+)""").find(it)?.groupValues?.get(1) }
+        val tvMatch = serverUrls.firstNotNullOfOrNull { Regex("""/tv/\d+/(\d+)/(\d+)""").find(it) }
+        val season = tvMatch?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""season["']?\s*:\s*["']?(\d+)""").find(html)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""/s(\d+)e\d+/?""").find(data)?.groupValues?.get(1)?.toIntOrNull()
+        val episode = tvMatch?.groupValues?.get(2)?.toIntOrNull()
+            ?: Regex("""episode["']?\s*:\s*["']?(\d+)""").find(html)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""/s\d+e(\d+)/?""").find(data)?.groupValues?.get(1)?.toIntOrNull()
+        val isMovie = data.contains("/movies/") || (season == null && episode == null)
+
+        if (tmdbId != null) {
+            // 3. VidLink API (DASH stream + captions) - fast API call, no WebView hang
             try {
-                val ok = loadExtractor(src, data, subtitleCallback, callback)
-                if (ok) foundLinks = true
+                val vl = extractVidlinkApi(tmdbId, isMovie, season, episode)
+                val stream = vl?.stream
+                if (stream != null) {
+                    val playlist = stream.playlist
+                    if (!playlist.isNullOrBlank()) {
+                        val linkHeaders = mutableMapOf(
+                            "User-Agent" to USER_AGENT,
+                            "Referer" to "https://vidlink.pro/",
+                            "Origin" to "https://vidlink.pro"
+                        )
+                        stream.playlistHeaders?.forEach { (k, v) -> linkHeaders[k] = v }
+                        val linkType = when {
+                            stream.type.equals("dash", true) || playlist.contains(".mpd") -> ExtractorLinkType.DASH
+                            playlist.contains(".m3u8") -> ExtractorLinkType.M3U8
+                            else -> ExtractorLinkType.VIDEO
+                        }
+                        val heightStr = Regex("""_(\d{3,4})_h26[45]_""").find(playlist)?.groupValues?.get(1)
+                        val qualityVal = if (heightStr != null) getQualityFromName(heightStr) else Qualities.Unknown.value
+                        val label = if (heightStr != null) "$name - VidLink (${heightStr}p)" else "$name - VidLink"
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = this.name,
+                                name = label,
+                                url = playlist,
+                                type = linkType
+                            ) {
+                                this.referer = "https://vidlink.pro/"
+                                this.headers = linkHeaders
+                                this.quality = qualityVal
+                            }
+                        )
+                        foundLinks = true
+                    }
+                    stream.captions?.forEach { cap ->
+                        val url = cap.url ?: return@forEach
+                        val lang = cap.language?.takeIf { it.isNotBlank() } ?: "Unknown"
+                        subtitleCallback.invoke(SubtitleFile(lang, url))
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // 4. OpenSubtitles (English, Turkish, and 15+ languages in SRT format)
+            try {
+                loadOpenSubtitles(tmdbId, isMovie, season, episode, subtitleCallback)
             } catch (_: Exception) {}
         }
 
-        // 3. Fallback: search regex for any embedded player URLs in script/html
-        Regex("""data-url=["'](https?://[^"']+)["']""").findAll(html).forEach { match ->
-            val src = match.groupValues[1].replace("&amp;", "&")
-            if (src.contains("123moviespremium.net") && !foundLinks) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "$name - Direct MP4 (SD 360p)",
-                        url = src,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "Referer" to "$mainUrl/",
-                            "User-Agent" to USER_AGENT
-                        )
-                        this.quality = Qualities.P360.value
-                    }
-                )
-                foundLinks = true
-            } else if (src.contains("gomovies-sx.net") || src.contains("vidlink.pro")) {
-                try {
-                    loadExtractor(src, data, subtitleCallback, callback)
-                } catch (_: Exception) {}
-            }
+        // 5. Fallback for any other standard third-party embeds (excluding gomovies/vidlink which lack built-in extractors)
+        serverUrls.filter {
+            !it.contains("123moviespremium.net") &&
+                !it.contains("gomovies-sx.net") &&
+                !it.contains("vidlink.pro")
+        }.forEach { url ->
+            try {
+                if (loadExtractor(url, data, subtitleCallback, callback)) {
+                    foundLinks = true
+                }
+            } catch (_: Exception) {}
         }
 
         return foundLinks
     }
 
-    private suspend fun extractGoMovies(
-        embedUrl: String,
-        referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val isTv = embedUrl.contains("/embed/tv/")
-            val vsUrl = if (isTv) {
-                val match = Regex("""/embed/tv/(\d+)/(\d+)/(\d+)""").find(embedUrl)
-                if (match != null) {
-                    val (tmdb, season, ep) = match.destructured
-                    "https://gomovies-sx.net/vs_src.php?type=tv&id=$tmdb&season=$season&episode=$ep"
-                } else null
-            } else {
-                val match = Regex("""/embed/movie/(\d+)""").find(embedUrl)
-                if (match != null) {
-                    val tmdb = match.groupValues[1]
-                    "https://gomovies-sx.net/vs_src.php?type=movie&id=$tmdb"
-                } else null
-            } ?: return false
-
-            val jsonText = app.get(
-                vsUrl,
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Referer" to embedUrl,
-                    "X-Requested-With" to "XMLHttpRequest"
-                )
-            ).text
-
-            val srcMatch = Regex(""""src"\s*:\s*"([^"]+)"""").find(jsonText)
-            val landingUrl = srcMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: return false
-
-            // Fetch landing page to get the direct playerUrl
-            val landingHtml = app.get(
-                landingUrl,
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Referer" to embedUrl
-                )
-            ).text
-            val playerPath = Regex(""""playerUrl"\s*:\s*"([^"]+)"""").find(landingHtml)?.groupValues?.get(1)?.replace("\\/", "/")
-            val playerUrl = if (!playerPath.isNullOrBlank()) {
-                val domain = landingUrl.substringBefore("/embed/tv").substringBefore("/embed/movie")
-                "$domain$playerPath"
-            } else {
-                landingUrl
-            }
-
-            // Headless WebView executes the player and captures the 1080p master.m3u8 playlist
-            val resolver = WebViewResolver(
-                interceptUrl = Regex(""".*master\.m3u8.*|.*\.m3u8\?.*""")
-            )
-            val res = app.get(playerUrl, interceptor = resolver)
-            val m3u8Url = res.url.takeIf { it.contains(".m3u8") }
-                ?: res.okhttpResponse.request.url.toString()
-
-            if (m3u8Url.contains(".m3u8")) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "$name - Server 1 (1080p FHD)",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "https://stellarconductornexus.com/"
-                        this.headers = mapOf(
-                            "Referer" to "https://stellarconductornexus.com/",
-                            "User-Agent" to USER_AGENT
-                        )
-                        this.quality = Qualities.P1080.value
-                    }
-                )
-                return true
-            }
-            false
-        } catch (_: Exception) {
-            false
+    private suspend fun extractVidlinkApi(
+        tmdbId: String,
+        isMovie: Boolean,
+        season: Int?,
+        episode: Int?
+    ): VidlinkResponse? {
+        val tokenJson = app.get(
+            "https://enc-dec.app/api/enc-vidlink?text=$tmdbId",
+            headers = mapOf("User-Agent" to USER_AGENT),
+            timeout = 15L
+        ).text
+        val token = tryParseJson<EncDecResponse>(tokenJson)?.result ?: return null
+        val apiUrl = if (isMovie) {
+            "https://vidlink.pro/api/b/movie/$token?multiLang=0"
+        } else {
+            "https://vidlink.pro/api/b/tv/$token/${season ?: 1}/${episode ?: 1}?multiLang=0"
         }
+        val json = app.get(
+            apiUrl,
+            headers = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to "https://vidlink.pro/",
+                "X-Playback-Environment" to "webkit"
+            ),
+            timeout = 20L
+        ).text
+        return tryParseJson<VidlinkResponse>(json)
     }
 
-    private suspend fun extractVidlink(
-        vidlinkUrl: String,
-        referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val resolver = WebViewResolver(
-                interceptUrl = Regex(""".*\.m3u8.*""")
-            )
-            val res = app.get(vidlinkUrl, interceptor = resolver)
-            val m3u8Url = res.url.takeIf { it.contains(".m3u8") }
-                ?: res.okhttpResponse.request.url.toString()
-
-            if (m3u8Url.contains(".m3u8")) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "$name - Server 2 (1080p FHD)",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "https://vidlink.pro/"
-                        this.headers = mapOf(
-                            "Referer" to "https://vidlink.pro/",
-                            "User-Agent" to USER_AGENT
-                        )
-                        this.quality = Qualities.P1080.value
-                    }
-                )
-                return true
+    private suspend fun getImdbId(tmdbId: String, isMovie: Boolean): String? {
+        try {
+            val url = if (isMovie) {
+                "https://data.vidsrc.sh/api.php?type=movie&tmdb=$tmdbId"
+            } else {
+                "https://data.vidsrc.sh/api.php?type=tv&tmdb=$tmdbId&season=1&episode=1"
             }
-            false
-        } catch (_: Exception) {
-            false
+            val text = app.get(url, headers = mapOf("User-Agent" to USER_AGENT), timeout = 10L).text
+            Regex(""""imdb_id"\s*:\s*"(tt\d+)"""").find(text)?.groupValues?.get(1)?.let { return it }
+        } catch (_: Exception) {}
+        try {
+            val type = if (isMovie) "movie" else "tv"
+            val text = app.get(
+                "https://api.themoviedb.org/3/$type/$tmdbId/external_ids?api_key=$TMDB_KEY",
+                timeout = 10L
+            ).text
+            Regex(""""imdb_id"\s*:\s*"(tt\d+)"""").find(text)?.groupValues?.get(1)?.let { return it }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    private suspend fun loadOpenSubtitles(
+        tmdbId: String,
+        isMovie: Boolean,
+        season: Int?,
+        episode: Int?,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        val imdb = getImdbId(tmdbId, isMovie)?.removePrefix("tt") ?: return
+        val url = if (isMovie) {
+            "https://rest.opensubtitles.org/search/imdbid-$imdb"
+        } else {
+            "https://rest.opensubtitles.org/search/episode-${episode ?: 1}/imdbid-$imdb/season-${season ?: 1}"
         }
+        val text = app.get(
+            url,
+            headers = mapOf(
+                "User-Agent" to "TemporaryUserAgent",
+                "X-User-Agent" to "TemporaryUserAgent"
+            ),
+            timeout = 15L
+        ).text
+        val subs = tryParseJson<List<OpenSubtitleItem>>(text) ?: return
+        subs.filter { it.subFormat.equals("srt", true) && !it.subDownloadLink.isNullOrBlank() }
+            .groupBy { it.languageName ?: it.iso639 ?: "Unknown" }
+            .forEach { (lang, list) ->
+                val best = list.sortedWith(
+                    compareBy<OpenSubtitleItem> { it.subHearingImpaired == "1" }
+                        .thenByDescending { it.subDownloadsCnt?.toIntOrNull() ?: 0 }
+                ).first()
+                val link = best.subDownloadLink!!.removeSuffix(".gz")
+                subtitleCallback.invoke(SubtitleFile(lang, link))
+            }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -439,5 +424,35 @@ class ElisWorldProvider : MainAPI() {
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("overview") val overview: String? = null,
         @JsonProperty("still_path") val stillPath: String? = null
+    )
+
+    data class EncDecResponse(
+        @JsonProperty("result") val result: String? = null
+    )
+
+    data class VidlinkResponse(
+        @JsonProperty("stream") val stream: VidlinkStream? = null
+    )
+
+    data class VidlinkStream(
+        @JsonProperty("type") val type: String? = null,
+        @JsonProperty("playlist") val playlist: String? = null,
+        @JsonProperty("playlistHeaders") val playlistHeaders: Map<String, String>? = null,
+        @JsonProperty("captions") val captions: List<VidlinkCaption>? = null
+    )
+
+    data class VidlinkCaption(
+        @JsonProperty("language") val language: String? = null,
+        @JsonProperty("type") val type: String? = null,
+        @JsonProperty("url") val url: String? = null
+    )
+
+    data class OpenSubtitleItem(
+        @JsonProperty("ISO639") val iso639: String? = null,
+        @JsonProperty("LanguageName") val languageName: String? = null,
+        @JsonProperty("SubFormat") val subFormat: String? = null,
+        @JsonProperty("SubDownloadLink") val subDownloadLink: String? = null,
+        @JsonProperty("SubHearingImpaired") val subHearingImpaired: String? = null,
+        @JsonProperty("SubDownloadsCnt") val subDownloadsCnt: String? = null
     )
 }
