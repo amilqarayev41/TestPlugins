@@ -141,42 +141,24 @@ class HDFilmCehennemiProvider : MainAPI() {
     )
 
     /**
-     * Decrypt the video URL from the site's encrypted chunks.
-     *
-     * The playerr page embeds a packed JS that defines a function (y20 or similar)
-     * which takes an array of base64-encoded chunks split by "*" and decrypts them
-     * to produce the HLS stream URL.
-     *
-     * Algorithm steps:
-     * 1. Extract operation key and hash key from deterministic positions in the chunks array
-     * 2. Join remaining chunks
-     * 3. Apply operations from the operation key in REVERSE order (base64 decode, reverse, caesar shift)
-     * 4. Unshuffle using a seeded PRNG
-     * 5. XOR with a rolling key derived from the hash
+     * Decrypt Variant 1: Operation and hash keys are embedded inside the chunks array
+     * at deterministic positions (pos2 = 8 + s % 5, pos1 = s % 7).
      */
-    private fun decryptSource(chunks: MutableList<String>): String? {
+    private fun decryptSourceV1(chunks: MutableList<String>): String? {
         if (chunks.size < 3) return null
 
         val s = chunks.size - 2
+        val pos2 = 8 + (s % 5)
+        val pos1 = s % 7
 
-        // Extract operation key and hash key from deterministic positions
-        val pos2 = 8 + (s % 5)       // position of operation key
-        val pos1 = s % 7             // position of hash key
-
-        // Bounds check
         if (pos2 >= chunks.size) return null
-
         val operationKey = chunks.removeAt(pos2)
 
-        // After removing pos2, recalculate pos1 bounds
         if (pos1 >= chunks.size) return null
-
         val hashKey = chunks.removeAt(pos1)
 
-        // Join remaining chunks
         var d = chunks.joinToString("")
 
-        // Hash the hashKey to derive decryption parameters
         var bigA = 0
         var t = 0
         for ((index, ch) in hashKey.withIndex()) {
@@ -189,33 +171,31 @@ class HDFilmCehennemiProvider : MainAPI() {
         val increment = (t % 11) + 5
         var shuffleSeed = ((t * 251 + bigA) % 65519) + 1
 
-        // Apply operations from operationKey in REVERSE order
         for (z in operationKey.reversed()) {
             when (z) {
                 '7' -> {
-                    // Base64 decode
                     try {
-                        d = String(Base64.decode(d, Base64.DEFAULT), Charsets.ISO_8859_1)
+                        var padded = d
+                        while (padded.length % 4 != 0) padded += "="
+                        d = String(Base64.decode(padded, Base64.DEFAULT), Charsets.ISO_8859_1)
                     } catch (_: Exception) {
                         return null
                     }
                 }
                 '3' -> {
-                    // Reverse the string
                     d = d.reversed()
                 }
                 else -> {
-                    // Caesar shift on letters only
                     val shiftAmount = (26 - ((z.code - 96) % 26)) % 26
                     if (shiftAmount != 0) {
-                        d = caesarShift(d, shiftAmount)
+                        d = caesarShiftV1(d, shiftAmount)
                     }
                 }
             }
         }
 
-        // Unshuffle using seeded PRNG
         val len = d.length
+        if (len < 2) return null
         val indices = IntArray(len)
         for (i in len - 1 downTo 1) {
             shuffleSeed = (shuffleSeed * 89 + 53) % 65519
@@ -230,7 +210,6 @@ class HDFilmCehennemiProvider : MainAPI() {
         }
         d = String(chars)
 
-        // XOR with rolling key
         var key = startKey
         val result = StringBuilder(len)
         for (ch in d) {
@@ -243,13 +222,97 @@ class HDFilmCehennemiProvider : MainAPI() {
         return result.toString()
     }
 
-    /** Apply a Caesar shift to alphabetic characters only. */
-    private fun caesarShift(input: String, shift: Int): String {
+    private fun caesarShiftV1(input: String, shift: Int): String {
         val sb = StringBuilder(input.length)
         for (ch in input) {
             when {
                 ch in 'a'..'z' -> sb.append(((ch - 'a' + shift) % 26 + 'a'.code).toChar())
                 ch in 'A'..'Z' -> sb.append(((ch - 'A' + shift) % 26 + 'A'.code).toChar())
+                else -> sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Decrypt Variant 2: Keys are local constants inside the unpacked function.
+     * Uses constants 31, 65521, 65537 with letter offset 64.
+     */
+    private fun decryptSourceV2(chunks: List<String>, hashKey: String, opKey: String): String? {
+        if (chunks.isEmpty() || hashKey.isBlank() || opKey.isBlank()) return null
+
+        var d = chunks.joinToString("")
+
+        var gcose = 0
+        var yk1y = 0
+        for ((index, ch) in hashKey.withIndex()) {
+            val code = ch.code
+            gcose = (gcose * 31 + code) % 251
+            yk1y = (yk1y xor (code + index)) and 255
+        }
+
+        val yz1 = (gcose + yk1y) % 256
+        val fus = (gcose % 13) + 3
+        var f546r = ((gcose * 256 + yk1y) % 65521) + 1
+
+        for (z in opKey.reversed()) {
+            when (z) {
+                'b' -> {
+                    try {
+                        var padded = d
+                        while (padded.length % 4 != 0) padded += "="
+                        d = String(Base64.decode(padded, Base64.DEFAULT), Charsets.ISO_8859_1)
+                    } catch (_: Exception) {
+                        return null
+                    }
+                }
+                'v' -> {
+                    d = d.reversed()
+                }
+                else -> {
+                    val shift = (26 - ((z.code - 64) % 26)) % 26
+                    if (shift != 0) {
+                        d = caesarShiftV2(d, shift)
+                    }
+                }
+            }
+        }
+
+        val len = d.length
+        if (len < 2) return null
+        val indices = IntArray(len)
+        for (i in len - 1 downTo 1) {
+            f546r = (f546r * 75 + 74) % 65537
+            indices[i] = f546r % (i + 1)
+        }
+
+        val chars = d.toCharArray()
+        for (i in 1 until len) {
+            val j = indices[i]
+            val tmp = chars[i]
+            chars[i] = chars[j]
+            chars[j] = tmp
+        }
+        d = String(chars)
+
+        var bupw4 = yz1
+        val sb = StringBuilder(len)
+        for (ch in d) {
+            val code = ch.code
+            bupw4 = (bupw4 + fus) % 256
+            sb.append((code xor bupw4).toChar())
+            bupw4 = (bupw4 + code) % 256
+        }
+
+        return sb.toString()
+    }
+
+    private fun caesarShiftV2(input: String, shift: Int): String {
+        val sb = StringBuilder(input.length)
+        for (ch in input) {
+            when (ch) {
+                in 'A'..'Z' -> sb.append(((ch - 'A' + shift) % 26 + 'A'.code).toChar())
+                in 'a'..'z' -> sb.append(((ch - 'a' + shift) % 26 + 'a'.code).toChar())
                 else -> sb.append(ch)
             }
         }
@@ -263,22 +326,90 @@ class HDFilmCehennemiProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ) {
         val pageText = app.get(url, referer = "$mainUrl/").text
-
-        // ---- Extract encrypted chunks and decrypt the video URL ----
-        // The playerr page has: return functionName("chunk1*chunk2*...*chunkN".split("*"))
-        val chunksMatch = Regex("""return\s+\w+\(\s*"([^"]+)"\s*\.split\("\*"\)\s*\)""")
-            .find(pageText)
-        
         var videoUrl: String? = null
-        
-        if (chunksMatch != null) {
-            val chunksStr = chunksMatch.groupValues[1]
-            val chunks = chunksStr.split("*").toMutableList()
-            videoUrl = decryptSource(chunks)
+
+        // 1. Try split format with dynamic delimiter: return func("chunk1...chunkN".split("delim"))
+        val splitMatch = Regex("""return\s+([a-zA-Z0-9_$]+)\s*\(\s*"([^"]+)"\s*\.split\("([^"]+)"\)\s*\)""")
+            .find(pageText)
+        if (splitMatch != null) {
+            val rawData = splitMatch.groupValues[2]
+            val delim = splitMatch.groupValues[3]
+            val chunks = rawData.split(delim).toMutableList()
+            videoUrl = decryptSourceV1(chunks)
         }
 
-        // Fallback: try getAndUnpack + file_link (legacy format)
-        if (videoUrl.isNullOrBlank()) {
+        // 2. Try array format in pageText: return func(["chunk1", "chunk2", ...])
+        if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
+            val arrMatch = Regex("""return\s+([a-zA-Z0-9_$]+)\s*\(\s*\[([\"'\w\s,\.\=\+\/\-]+)\]\s*\)""")
+                .find(pageText)
+            if (arrMatch != null) {
+                val fnName = arrMatch.groupValues[1]
+                val chunks = arrMatch.groupValues[2]
+                    .split(",")
+                    .map { it.trim().trim('"', '\'') }
+                    .filter { it.isNotBlank() }
+
+                // Try V1 first
+                videoUrl = decryptSourceV1(chunks.toMutableList())
+
+                // If V1 didn't yield a valid m3u8, try V2 by extracting keys from unpacked script
+                if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
+                    val scriptTags = Jsoup.parse(pageText).select("script").map { it.data() }
+                    for (script in scriptTags) {
+                        if (!script.contains("eval(function")) continue
+                        val unpacked = getAndUnpack(script)
+                        if (unpacked.contains(fnName)) {
+                            val fnBody = unpacked.substringAfter("function $fnName").substringBefore("}")
+                            val keysMatch = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;""")
+                                .find(fnBody)
+                            if (keysMatch != null) {
+                                val hashKey = keysMatch.groupValues[1]
+                                val opKey = keysMatch.groupValues[2]
+                                val candidate = decryptSourceV2(chunks, hashKey, opKey)
+                                if (!candidate.isNullOrBlank() && candidate.contains(".m3u8")) {
+                                    videoUrl = candidate
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Scan unpacked scripts for embedded call: var x = func(["chunk1", ...])
+        if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
+            val scriptTags = Jsoup.parse(pageText).select("script").map { it.data() }
+            for (script in scriptTags) {
+                if (!script.contains("eval(function")) continue
+                val unpacked = getAndUnpack(script)
+                val callMatch = Regex("""var\s+\w+\s*=\s*([a-zA-Z0-9_$]+)\s*\(\s*\[([\"'\w\s,\.\=\+\/\-]+)\]\s*\)""")
+                    .find(unpacked)
+                if (callMatch != null) {
+                    val fnName = callMatch.groupValues[1]
+                    val chunks = callMatch.groupValues[2]
+                        .split(",")
+                        .map { it.trim().trim('"', '\'') }
+                        .filter { it.isNotBlank() }
+
+                    val fnBody = unpacked.substringAfter("function $fnName").substringBefore("}")
+                    val keysMatch = Regex("""var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;\s*var\s+\w+\s*=\s*"([A-Za-z0-9+/=]+)"\s*;""")
+                        .find(fnBody)
+                    if (keysMatch != null) {
+                        val hashKey = keysMatch.groupValues[1]
+                        val opKey = keysMatch.groupValues[2]
+                        val candidate = decryptSourceV2(chunks, hashKey, opKey)
+                        if (!candidate.isNullOrBlank() && candidate.contains(".m3u8")) {
+                            videoUrl = candidate
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Fallback: try legacy getAndUnpack + file_link
+        if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
             val scriptData = Jsoup.parse(pageText).select("script")
                 .find { it.data().contains("sources:") }?.data()
             if (scriptData != null) {
@@ -289,16 +420,11 @@ class HDFilmCehennemiProvider : MainAPI() {
                 if (fileLink.isNotBlank()) {
                     videoUrl = base64Decode(fileLink)
                 }
-                // Also try direct file: in sources
-                if (videoUrl.isNullOrBlank()) {
-                    videoUrl = Regex("""file\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""")
-                        .find(unpacked)?.groupValues?.get(1)
-                }
             }
         }
 
-        // Fallback: try direct m3u8/mp4 URL in the page
-        if (videoUrl.isNullOrBlank()) {
+        // 5. Fallback: direct m3u8/mp4 URL in page
+        if (videoUrl.isNullOrBlank() || !videoUrl.contains(".m3u8")) {
             videoUrl = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
                 .find(pageText)?.groupValues?.get(1)
         }
@@ -345,51 +471,60 @@ class HDFilmCehennemiProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // ---- Method 1: Alternative links (multiple sources/languages) ----
-        document.select("div.alternative-links").map { element ->
-            element to element.attr("data-lang").uppercase()
-        }.forEach { (element, langCode) ->
+        // ---- Method 1: Direct iframe fallback from page ----
+        // For TV Series episodes and default movie players, this is immediately available
+        // and avoids making rapid burst API calls that trigger HTTP 429 rate limits.
+        val directIframe = document.selectFirst("div.video-container iframe")
+            ?.let { it.attr("data-src").ifBlank { it.attr("src") } }
+        var directPlayerUrl: String? = null
+        if (!directIframe.isNullOrBlank()) {
+            directPlayerUrl = fixUrl(directIframe)
+            if (directPlayerUrl.contains("?rapidrame_id=")) {
+                directPlayerUrl = "$mainUrl/playerr/" +
+                    directPlayerUrl.substringAfter("?rapidrame_id=")
+            }
+            try {
+                invokeLocalSource("HDFilmCehennemi", directPlayerUrl, subtitleCallback, callback)
+            } catch (_: Exception) { }
+        }
+
+        // ---- Method 2: Alternative links (multiple sources/languages) ----
+        val altButtons = document.select("div.alternative-links").flatMap { element ->
+            val langCode = element.attr("data-lang").uppercase()
             element.select("button.alternative-link").map { button ->
-                button.text().replace("(HDrip Xbet)", "").trim() +
-                    " $langCode" to button.attr("data-video")
-            }.forEach { (source, videoID) ->
-                try {
-                    val apiResp = app.get(
-                        "$mainUrl/video/$videoID/",
-                        headers = mapOf(
-                            "Content-Type" to "application/json",
-                            "X-Requested-With" to "fetch",
-                        ),
-                        referer = data,
-                    ).text
-
-                    var iframe = Regex("""data-src=\\?"([^"]+)""")
-                        .find(apiResp)?.groupValues?.get(1)
-                        ?.replace("\\", "")
-                        ?: return@forEach
-
-                    // Convert rapidrame iframe URLs to local /playerr/ URLs
-                    if (iframe.contains("?rapidrame_id=")) {
-                        iframe = "$mainUrl/playerr/" +
-                            iframe.substringAfter("?rapidrame_id=")
-                    }
-
-                    invokeLocalSource(source, iframe, subtitleCallback, callback)
-                } catch (_: Exception) { }
+                val source = button.text().replace("(HDrip Xbet)", "").trim() + " $langCode"
+                val videoId = button.attr("data-video")
+                source to videoId
             }
         }
 
-        // ---- Method 2: Direct iframe fallback from page ----
-        val directIframe = document.selectFirst("div.video-container iframe")
-            ?.let { it.attr("data-src").ifBlank { it.attr("src") } }
-        if (!directIframe.isNullOrBlank()) {
-            var iframeUrl = fixUrl(directIframe)
-            if (iframeUrl.contains("?rapidrame_id=")) {
-                iframeUrl = "$mainUrl/playerr/" +
-                    iframeUrl.substringAfter("?rapidrame_id=")
-            }
+        for ((source, videoID) in altButtons) {
             try {
-                invokeLocalSource("HDFilmCehennemi", iframeUrl, subtitleCallback, callback)
+                val apiResp = app.get(
+                    "$mainUrl/video/$videoID/",
+                    headers = mapOf(
+                        "Content-Type" to "application/json",
+                        "X-Requested-With" to "fetch",
+                    ),
+                    referer = data,
+                ).text
+
+                var iframe = Regex("""data-src=\\?"([^"]+)""")
+                    .find(apiResp)?.groupValues?.get(1)
+                    ?.replace("\\", "")
+                    ?: continue
+
+                if (iframe.contains("?rapidrame_id=")) {
+                    iframe = "$mainUrl/playerr/" +
+                        iframe.substringAfter("?rapidrame_id=")
+                }
+
+                // Skip if this player URL is identical to the direct one we already invoked
+                if (directPlayerUrl != null && (iframe == directPlayerUrl || iframe.substringAfterLast("/") == directPlayerUrl.substringAfterLast("/"))) {
+                    continue
+                }
+
+                invokeLocalSource(source, iframe, subtitleCallback, callback)
             } catch (_: Exception) { }
         }
 
