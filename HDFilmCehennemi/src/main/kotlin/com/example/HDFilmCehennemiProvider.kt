@@ -152,7 +152,7 @@ class HDFilmCehennemiProvider : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.rating = rating
+                this.score = rating
                 this.tags = tags
                 addTrailer(trailer)
             }
@@ -161,7 +161,7 @@ class HDFilmCehennemiProvider : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.rating = rating
+                this.score = rating
                 this.tags = tags
                 addTrailer(trailer)
             }
