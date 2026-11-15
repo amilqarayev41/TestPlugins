@@ -4,11 +4,11 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 1
+version = 2
 
 cloudstream {
     description = "CizgiMax - Çizgi Film ve Anime"
-    authors = listOf("Antigravity")
+    authors = listOf("Amil")
 
     /**
     * Status int as one of the following:
