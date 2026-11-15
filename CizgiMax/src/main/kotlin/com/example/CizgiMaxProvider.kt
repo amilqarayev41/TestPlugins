@@ -277,7 +277,11 @@ class CizgiMaxProvider : MainAPI() {
 
                         // Check if redirected to an external host (Google Drive, Vidmoly, etc.)
                         if (finalUrl != fullSrc) {
-                            if (loadExtractor(finalUrl, referer = data, subtitleCallback, callback)) {
+                            if (finalUrl.contains("drive.google.com")) {
+                                if (extractGoogleDrive(finalUrl, sourceName, callback)) {
+                                    foundAny = true
+                                }
+                            } else if (loadExtractor(finalUrl, referer = data, subtitleCallback, callback)) {
                                 foundAny = true
                             }
                         }
@@ -331,7 +335,11 @@ class CizgiMaxProvider : MainAPI() {
                         val iframes = Regex("""<iframe[^>]+src=["']([^"']+)["']""").findAll(cleanBody)
                         for (iframe in iframes) {
                             val iUrl = fixUrl(iframe.groupValues[1].replace("&amp;", "&"))
-                            if (loadExtractor(iUrl, referer = finalUrl, subtitleCallback, callback)) {
+                            if (iUrl.contains("drive.google.com")) {
+                                if (extractGoogleDrive(iUrl, sourceName, callback)) {
+                                    foundAny = true
+                                }
+                            } else if (loadExtractor(iUrl, referer = finalUrl, subtitleCallback, callback)) {
                                 foundAny = true
                             }
                         }
@@ -346,8 +354,13 @@ class CizgiMaxProvider : MainAPI() {
             if (src.isNotBlank()) {
                 try {
                     val fullUrl = fixUrl(src)
-                    loadExtractor(fullUrl, referer = data, subtitleCallback, callback)
-                    foundAny = true
+                    if (fullUrl.contains("drive.google.com")) {
+                        if (extractGoogleDrive(fullUrl, "Google Drive", callback)) {
+                            foundAny = true
+                        }
+                    } else if (loadExtractor(fullUrl, referer = data, subtitleCallback, callback)) {
+                        foundAny = true
+                    }
                 } catch (_: Exception) {}
             }
         }
@@ -355,13 +368,63 @@ class CizgiMaxProvider : MainAPI() {
         return foundAny
     }
 
+    private suspend fun extractGoogleDrive(
+        url: String,
+        sourceName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val fileId = Regex("""(?:drive\.google\.com/(?:file/d/|open\?id=)|/download\?id=)([a-zA-Z0-9_-]+)""")
+            .find(url)?.groupValues?.get(1) ?: return false
+
+        return try {
+            val checkUrl = "https://drive.usercontent.google.com/download?id=$fileId&export=download"
+            val html = app.get(
+                checkUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            ).text
+            val uuid = Regex("""name=["']uuid["']\s*value=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+            val directUrl = if (!uuid.isNullOrBlank()) {
+                "https://drive.usercontent.google.com/download?id=$fileId&export=download&confirm=t&uuid=$uuid"
+            } else {
+                "https://drive.usercontent.google.com/download?id=$fileId&export=download&confirm=t"
+            }
+            callback.invoke(
+                newExtractorLink(
+                    sourceName,
+                    "$sourceName (Drive)",
+                    directUrl,
+                    ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "https://drive.google.com/"
+                    this.headers = mapOf(
+                        "Referer" to "https://drive.google.com/",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
             val request = chain.request()
+            val url = request.url.toString()
             val builder = request.newBuilder()
             builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            val referer = if (extractorLink.referer.isNotBlank()) extractorLink.referer else "$mainUrl/"
-            builder.header("Referer", referer)
+            if (url.contains("google.com") || url.contains("googleusercontent.com")) {
+                builder.header("Referer", "https://drive.google.com/")
+            } else if (url.contains("okcdn.ru") || url.contains("dzen.ru")) {
+                builder.header("Referer", "https://dzen.ru/")
+            } else {
+                val referer = if (extractorLink.referer.isNotBlank()) extractorLink.referer else "$mainUrl/"
+                builder.header("Referer", referer)
+            }
             extractorLink.headers.forEach { (key, value) ->
                 builder.header(key, value)
             }
