@@ -124,14 +124,13 @@ class ElisWorldProvider : MainAPI() {
                             if (path.startsWith("http")) path else "https://image.tmdb.org/t/p/w500$path"
                         }
                         episodesList.add(
-                            Episode(
-                                data = epUrl,
-                                name = epName,
-                                season = season,
-                                episode = epNum,
-                                posterUrl = epThumb,
-                                description = ep.overview?.cleanTitle()
-                            )
+                            newEpisode(epUrl) {
+                                this.name = epName
+                                this.season = season
+                                this.episode = epNum
+                                this.posterUrl = epThumb
+                                this.description = ep.overview?.cleanTitle()
+                            }
                         )
                     }
                 } catch (_: Exception) {}
@@ -146,22 +145,20 @@ class ElisWorldProvider : MainAPI() {
                     val href = fixUrlNull(a.attr("href")) ?: return@forEachIndexed
                     val name = a.text().cleanTitle().takeIf { it.isNotBlank() } ?: "Episode ${idx + 1}"
                     episodesList.add(
-                        Episode(
-                            data = href,
-                            name = name,
-                            season = 1,
-                            episode = idx + 1
-                        )
+                        newEpisode(href) {
+                            this.name = name
+                            this.season = 1
+                            this.episode = idx + 1
+                        }
                     )
                 }
             } else {
                 episodesList.add(
-                    Episode(
-                        data = "$mainUrl/watch/$showSlug/s1e1/",
-                        name = "Episode 1",
-                        season = 1,
-                        episode = 1
-                    )
+                    newEpisode("$mainUrl/watch/$showSlug/s1e1/") {
+                        this.name = "Episode 1"
+                        this.season = 1
+                        this.episode = 1
+                    }
                 )
             }
         }
@@ -199,14 +196,19 @@ class ElisWorldProvider : MainAPI() {
                     Qualities.P720.value
                 }
                 callback.invoke(
-                    ExtractorLink(
+                    newExtractorLink(
                         source = this.name,
                         name = "$name - Direct MP4 ($label)",
                         url = rawUrl,
-                        referer = "$mainUrl/",
-                        quality = qual,
                         type = ExtractorLinkType.VIDEO
-                    )
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "Referer" to "$mainUrl/",
+                            "User-Agent" to USER_AGENT
+                        )
+                        this.quality = qual
+                    }
                 )
                 foundLinks = true
             } else if (rawUrl.contains("gomovies-sx.net")) {
@@ -238,14 +240,19 @@ class ElisWorldProvider : MainAPI() {
             val src = match.groupValues[1].replace("&amp;", "&")
             if (src.contains("123moviespremium.net") && !foundLinks) {
                 callback.invoke(
-                    ExtractorLink(
+                    newExtractorLink(
                         source = this.name,
                         name = "$name - Direct MP4",
                         url = src,
-                        referer = "$mainUrl/",
-                        quality = Qualities.P720.value,
                         type = ExtractorLinkType.VIDEO
-                    )
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "Referer" to "$mainUrl/",
+                            "User-Agent" to USER_AGENT
+                        )
+                        this.quality = Qualities.P720.value
+                    }
                 )
                 foundLinks = true
             } else if (src.contains("gomovies-sx.net") || src.contains("vidlink.pro")) {
