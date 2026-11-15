@@ -4,7 +4,7 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 1
+version = 2
 
 cloudstream {
     description = "HDFilmCehennemi"
@@ -23,5 +23,5 @@ cloudstream {
 
     language = "tr"
 
-    iconUrl = "https://www.hdfilmcehennemi.nl/dist/images/logo-light.svg"
+    iconUrl = "https://www.hdfilmcehennemi.nl/favicon.ico"
 }
