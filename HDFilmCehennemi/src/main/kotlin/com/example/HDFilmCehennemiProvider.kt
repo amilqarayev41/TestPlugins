@@ -89,9 +89,8 @@ class HDFilmCehennemiProvider : MainAPI() {
         val poster = document.selectFirst("div.post-info-poster img")
             ?.let { fixImageUrl(it) }
         val description = document.selectFirst("article.post-info-content p")?.text()
-        val rating = document.selectFirst("div.post-info-imdb-rating span")
+        val imdbScore = document.selectFirst("div.post-info-imdb-rating span")
             ?.text()?.substringBefore(" ")?.toDoubleOrNull()
-            ?.let { (it * 10).toInt() }
         val tags = document.select("div.post-info-meta a[href*=category]")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
@@ -152,7 +151,7 @@ class HDFilmCehennemiProvider : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.score = rating
+                this.score = Score.from10(imdbScore)
                 this.tags = tags
                 addTrailer(trailer)
             }
@@ -161,7 +160,7 @@ class HDFilmCehennemiProvider : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.score = rating
+                this.score = Score.from10(imdbScore)
                 this.tags = tags
                 addTrailer(trailer)
             }
