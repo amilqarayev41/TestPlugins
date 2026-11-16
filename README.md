@@ -1,58 +1,57 @@
-**⚠️ This is currently under development, dont use it yet if you're not comfortable with constantly merging new changes**
+# Turkish-Repo 🇹🇷
 
-# `Cloudstream3 Plugin Repo Template`
+CloudStream repository for Turkish and international movie, cartoon, and TV series streaming providers.
 
-Template for a [Cloudstream3](https://github.com/recloudstream) plugin repo
+---
 
-**⚠️ Make sure you check "Include all branches" when using this template**
+## 🚀 How to Add to CloudStream
 
- 
-## Getting started with writing your first plugin
+You can add this repository to CloudStream using either the **Shortcode** or the **Full Repository URL**.
 
-This template includes 1 example plugin.
+### Method 1: Using Shortcode (Recommended)
 
-1. Open the root build.gradle.kts, read the comments and replace all the placeholders
-2. Familiarize yourself with the project structure. Most files are commented
-3. Build or deploy your first plugin using:
-   - Windows: `.\gradlew.bat ExampleProvider:make` or `.\gradlew.bat ExampleProvider:deployWithAdb`
-   - Linux & Mac: `./gradlew ExampleProvider:make` or `./gradlew ExampleProvider:deployWithAdb`
+1. In CloudStream, navigate to **Settings** ⚙️ → **Extensions**.
+2. Tap **Add Repository** (+).
+3. In the repository URL/shortcode field, type:
+   ```text
+   turkishrepo
+   ```
+4. Tap **Download** / **Add**.
 
+---
 
-## Granting All Files Access on Newer Android Devices
+### Method 2: Using Full Repository URL
 
-For local plugin testing, you need to grant the app "All Files Access" on newer Android devices (Android 11 and above). Here’s how to do it:
+If you prefer to enter the full URL directly:
 
-### Using ADB
+```text
+https://raw.githubusercontent.com/amilqarayev41/Turkish-Repo/builds/repo.json
+```
 
-* `adb shell appops set --uid PACKAGE_NAME MANAGE_EXTERNAL_STORAGE allow`
-* Replace `PACKAGE_NAME` with the name of the package for the Cloudstream3 version you are using:
-   - debug: `com.lagradost.cloudstream3.prerelease.debug`
-   - prerelease: `com.lagradost.cloudstream3.prerelease`
-   - stable: `com.lagradost.cloudstream3`
+1. In CloudStream, navigate to **Settings** ⚙️ → **Extensions**.
+2. Tap **Add Repository** (+).
+3. Paste the URL above and tap **Download** / **Add**.
 
-### Manually
+---
 
-1. **Open Settings**: Go to your device’s Settings menu.
+## 📦 Included Plugins
 
-2. **Navigate to Special Access**:
-   - Tap on "Apps & notifications" or "Apps".
-   - Select "Special app access" or "Special access".
+| Plugin | Type | Description |
+| :--- | :--- | :--- |
+| **Dizilla** | Series, Anime, Cartoons | Turkish and international TV series, cartoons, and anime. |
+| **ElisWorld** | Cartoons, Animation | Cartoon network, adult animations, and animated movies with multi-language subtitle and download support. |
+| **FullHDFilmizlesene** | Movies | Turkish dubbed (TR Dublaj) and subtitled (TR Altyazı) movies with RapidVid & multi-server support. |
+| **HDFilmCehennemi** | Movies | Turkish dubbed and subtitled movies with direct streaming and download support. |
 
-3. **Select All Files Access**:
-   - Tap on "All files access".
-   - It may be under the three vertical dots menu towards the top of the screen.
+---
 
-4. **Grant Access to the App**: Find the app in the list and tap on it to toggle it, if it is not already enabled.
+## 🛠️ Building & Development
 
-6. **Restart the App**: Close and reopen the app to apply the changes.
+Built with the [CloudStream Gradle Plugin](https://github.com/recloudstream/gradle).
 
+```bash
+# Build all plugins and generate plugins.json
+./gradlew make makePluginsJson
+```
 
-## License
-
-Everything in this repo is released into the public domain. You may use it however you want with no conditions whatsoever
-
-
-## Attribution
-
-This template as well as the gradle plugin and the whole plugin system is **heavily** based on [Aliucord](https://github.com/Aliucord).
-*Go use it, it's a great mobile discord client mod!*
+Artifacts and releases are automatically built and published via GitHub Actions to the `builds` branch.
