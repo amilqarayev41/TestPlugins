@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActorNames
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addDuration
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
@@ -194,7 +194,7 @@ class FullHDFilmizleseneProvider : MainAPI() {
             this.year = year
             this.score = Score.from10(imdbScore)
             this.tags = tags
-            if (actors.isNotEmpty()) addActorNames(actors)
+            if (actors.isNotEmpty()) addActors(actors)
             if (!duration.isNullOrBlank()) addDuration(duration)
             addTrailer(trailer)
             this.recommendations = recommendations
