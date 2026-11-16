@@ -223,7 +223,14 @@ class ElisWorldProvider : MainAPI() {
         val isMovie = data.contains("/movies/") || (season == null && episode == null)
 
         if (tmdbId != null) {
-            // 3. VidLink API (DASH stream + captions) - fast API call, no WebView hang
+            // 3. Hexa API (HLS M3U8 stream) - H.264, multi-resolution, fully downloadable in CloudStream
+            try {
+                if (extractHexaApi(tmdbId, isMovie, season, episode, callback)) {
+                    foundLinks = true
+                }
+            } catch (_: Exception) {}
+
+            // 4. VidLink API (DASH stream + captions) - backup stream + built-in subtitles
             try {
                 val vl = extractVidlinkApi(tmdbId, isMovie, season, episode)
                 val stream = vl?.stream
@@ -267,13 +274,13 @@ class ElisWorldProvider : MainAPI() {
                 }
             } catch (_: Exception) {}
 
-            // 4. OpenSubtitles (English, Turkish, and 15+ languages in SRT format)
+            // 5. OpenSubtitles (English, Turkish, and 15+ languages in SRT format)
             try {
                 loadOpenSubtitles(tmdbId, isMovie, season, episode, subtitleCallback)
             } catch (_: Exception) {}
         }
 
-        // 5. Fallback for any other standard third-party embeds (excluding gomovies/vidlink which lack built-in extractors)
+        // 6. Fallback for any other standard third-party embeds (excluding gomovies/vidlink which lack built-in extractors)
         serverUrls.filter {
             !it.contains("123moviespremium.net") &&
                 !it.contains("gomovies-sx.net") &&
@@ -287,6 +294,94 @@ class ElisWorldProvider : MainAPI() {
         }
 
         return foundLinks
+    }
+
+    private suspend fun extractHexaApi(
+        tmdbId: String,
+        isMovie: Boolean,
+        season: Int?,
+        episode: Int?,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val capHeaders = mapOf(
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Origin" to "https://hexa.su",
+            "Referer" to "https://hexa.su/",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 OPR/129.0.0.0 (Edition std-2)"
+        )
+        val chText = app.post("https://cap.hexa.su/15d2cf0395/challenge", headers = capHeaders, timeout = 10L).text
+        val chMap = tryParseJson<Map<String, Any?>>(chText) ?: return false
+
+        val encText = app.post(
+            "https://enc-dec.app/api/enc-hexa",
+            headers = mapOf("User-Agent" to USER_AGENT),
+            json = mapOf("challenge_data" to chMap),
+            timeout = 15L
+        ).text
+        val encResult = tryParseJson<Map<String, Any?>>(encText)?.get("result") ?: return false
+
+        val redeemText = app.post(
+            "https://cap.hexa.su/15d2cf0395/redeem",
+            headers = capHeaders,
+            json = encResult,
+            timeout = 10L
+        ).text
+        val capToken = tryParseJson<Map<String, Any?>>(redeemText)?.get("token")?.toString() ?: return false
+
+        val keyBytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(keyBytes)
+        val apiKey = keyBytes.joinToString("") { "%02x".format(it) }
+
+        val hexaUrl = if (isMovie) {
+            "https://theemoviedb.hexa.su/api/tmdb/movie/$tmdbId/images"
+        } else {
+            "https://theemoviedb.hexa.su/api/tmdb/tv/$tmdbId/season/${season ?: 1}/episode/${episode ?: 1}/images"
+        }
+        val encrypted = app.get(
+            hexaUrl,
+            headers = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to "https://hexa.su/",
+                "Accept" to "text/plain",
+                "X-Fingerprint-Lite" to "e9136c41504646444",
+                "X-Cap-Token" to capToken,
+                "X-Api-Key" to apiKey
+            ),
+            timeout = 15L
+        ).text
+
+        val decText = app.post(
+            "https://enc-dec.app/api/dec-hexa",
+            headers = mapOf("User-Agent" to USER_AGENT),
+            json = mapOf("text" to encrypted, "key" to apiKey),
+            timeout = 15L
+        ).text
+        val decResp = tryParseJson<HexaDecResponse>(decText) ?: return false
+        var added = false
+        decResp.result?.sources?.forEach { src ->
+            val streamUrl = src.url ?: return@forEach
+            val srv = src.server?.lowercase() ?: ""
+            // Skip echo (frequently times out); alpha and delta are fast downloadable HLS streams
+            if (srv == "echo") return@forEach
+            callback.invoke(
+                newExtractorLink(
+                    source = this.name,
+                    name = "$name - Hexa (${srv.uppercase()} HLS)",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "https://hexa.su/"
+                    this.headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to "https://hexa.su/",
+                        "Origin" to "https://hexa.su"
+                    )
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            added = true
+        }
+        return added
     }
 
     private suspend fun extractVidlinkApi(
@@ -454,5 +549,18 @@ class ElisWorldProvider : MainAPI() {
         @JsonProperty("SubDownloadLink") val subDownloadLink: String? = null,
         @JsonProperty("SubHearingImpaired") val subHearingImpaired: String? = null,
         @JsonProperty("SubDownloadsCnt") val subDownloadsCnt: String? = null
+    )
+
+    data class HexaDecResponse(
+        @JsonProperty("result") val result: HexaResult? = null
+    )
+
+    data class HexaResult(
+        @JsonProperty("sources") val sources: List<HexaSource>? = null
+    )
+
+    data class HexaSource(
+        @JsonProperty("server") val server: String? = null,
+        @JsonProperty("url") val url: String? = null
     )
 }
